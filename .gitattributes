@@ -1,0 +1,8 @@
+# Exported meshes are binary STL (see STL_FORMAT in the Makefile); never let git
+# line-ending conversion near them.
+*.stl binary
+*.xcf binary
+
+# dist/ is build output. Collapse it by default in diffs and keep it out of the
+# language statistics.
+dist/** linguist-generated=true

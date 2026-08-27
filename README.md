@@ -3,6 +3,16 @@
 Turns the layered Pigpen logo in `pigpen_logo.xcf` into a printable two-layer
 plaque: a dark base with the light details raised on top of it.
 
+![Pigpen plaque, isometric view](dist/img/pigpen-iso.png)
+
+The finished models are committed under [`dist/`](dist/) — grab
+[`dist/stl/pigpen.stl`](dist/stl/pigpen.stl) and print it without installing any
+of the toolchain below. GitHub renders those STLs in its own 3-D viewer.
+
+| | |
+| --- | --- |
+| ![top](dist/img/pigpen-top.png) | ![front](dist/img/pigpen-front.png) |
+
 ```
 pigpen_logo.xcf
   │  make layers     GIMP exports each layer to a full-canvas PNG, alpha intact
@@ -16,11 +26,16 @@ build/svg/*.svg
 build/config.scad ── included by ── pigpen.scad
   │  make stl / make preview
   ▼
-build/stl/*.stl, build/img/*.png
+dist/stl/*.stl, dist/img/*.png     ← committed
 ```
 
-Everything under `build/` is generated. `pigpen.scad`, the `Makefile` and
-`tools/` are the sources.
+`pigpen.scad`, the `Makefile` and `tools/` are the sources. `build/` is
+scratch space and is ignored; `dist/` is generated too, but it is committed, so
+re-run `make all` and commit the result whenever the model changes.
+
+Every `.scad` in the project root gets an STL and a set of previews
+automatically — the Makefile globs for them, so adding a second model needs no
+edit there.
 
 ## Quick start
 
@@ -34,13 +49,19 @@ make check     # measure the STLs and assert they are the requested size
 
 ## Output
 
+All of this is committed, so the table doubles as the download list.
+
 | File | What it is |
 | --- | --- |
-| `build/stl/pigpen.stl` | Both layers as one solid |
-| `build/stl/pigpen-dark.stl` | Just the base |
-| `build/stl/pigpen-light.stl` | Just the raised light layer, already sitting at z = `DARK_H` |
-| `build/img/pigpen-{iso,top,front}.png` | Rendered previews |
-| `build/img/layers.png` | Contact sheet of the raw layer split, from `make layer-sheet` |
+| `dist/stl/pigpen.stl` | Both layers as one solid |
+| `dist/stl/pigpen-dark.stl` | Just the base |
+| `dist/stl/pigpen-light.stl` | Just the raised light layer, already sitting at z = `DARK_H` |
+| `dist/img/pigpen-{iso,top,front}.png` | Rendered previews, trimmed to the model |
+| `dist/img/layers.png` | Contact sheet of the raw layer split, from `make layer-sheet` |
+
+The STLs are exported as binary (`STL_FORMAT=binstl`) — about a fifth the size
+of OpenSCAD's ASCII default, which is worth caring about for a file that lives
+in git history. `make clean` deletes `dist/`; `make all` puts it back.
 
 The two part STLs are in a shared coordinate frame, so a slicer that imports both
 lines them up without any manual positioning. That is the route for a two-colour
@@ -64,6 +85,8 @@ make preview BASE_MODE=knockout
 | `BASE_MODE` | `silhouette` | See below |
 | `DARK_LAYER` / `LIGHT_LAYER` | `DarkPart` / `LightPart` | Layer names in the `.xcf` |
 | `TRACE_SCALE` | `1` | Upsample before tracing; raise if fine detail looks faceted |
+| `VIEWS` | `iso top front` | Previews rendered per model; each needs a `CAM_`/`PROJ_` pair |
+| `STL_FORMAT` | `binstl` | `asciistl` if you want a readable mesh |
 
 At the defaults the model is **120 × 52.85 × 7 mm**.
 

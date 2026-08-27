@@ -12,7 +12,7 @@
 #   build/config.scad + pigpen.scad
 #     |  make stl / make preview
 #     v
-#   build/stl/*.stl, build/img/*.png
+#   dist/stl/*.stl, dist/img/*.png     <- committed, so GitHub can preview them
 #
 # Every knob below can be overridden on the command line, e.g.
 #
@@ -28,7 +28,13 @@ SHELL := /usr/bin/env bash
 
 XCF         ?= pigpen_logo.xcf
 SCAD        ?= pigpen.scad
+
+# Intermediates (throwaway, .gitignored) and finished artefacts (committed).
+# The STLs and previews live in dist/ because they are the point of the repo:
+# GitHub renders a .stl in its 3-D viewer and the previews go in the README, so
+# both have to be in the tree for someone who has not run the toolchain.
 BUILD       ?= build
+DIST        ?= dist
 
 # Layer names as they appear in the .xcf. `make layers` prints what it found,
 # so if you rename them in GIMP the error will tell you the new names.
@@ -87,10 +93,25 @@ COLORSCHEME ?= Tomorrow Night
 PREVIEW_MARGIN ?= 40
 
 # OpenSCAD gimbal camera: translate x,y,z then rotate x,y,z then distance.
-# Distance is left at 0 because --viewall computes it.
+# Distance is left at 0 because --viewall computes it. Projection is p
+# (perspective) or o (orthographic); the flat-on views read better square-on.
 CAM_ISO     ?= 0,0,0,55,0,25,0
+PROJ_ISO    ?= p
 CAM_TOP     ?= 0,0,0,0,0,0,0
+PROJ_TOP    ?= o
 CAM_FRONT   ?= 0,0,0,90,0,0,0
+PROJ_FRONT  ?= o
+
+# Views rendered for every .scad. Adding one here needs a matching CAM_<NAME>
+# and PROJ_<NAME> above; nothing else.
+VIEWS       ?= iso top front
+
+# --------------------------------------------------------------- exports ----
+
+# binstl is ~5x smaller than OpenSCAD's default ASCII STL for the same mesh,
+# which matters because these files are committed. Every slicer and GitHub's
+# own viewer read it. Set STL_FORMAT=asciistl if you need a readable file.
+STL_FORMAT  ?= binstl
 
 # ------------------------------------------------------------- programs -----
 
@@ -104,8 +125,8 @@ PYTHON      ?= python3
 
 LAYERS_DIR  := $(BUILD)/layers
 SVG_DIR     := $(BUILD)/svg
-STL_DIR     := $(BUILD)/stl
-IMG_DIR     := $(BUILD)/img
+STL_DIR     := $(DIST)/stl
+IMG_DIR     := $(DIST)/img
 
 MANIFEST    := $(LAYERS_DIR)/manifest.tsv
 CONFIG      := $(BUILD)/config.scad
@@ -119,13 +140,24 @@ LIGHT_SVG   := $(SVG_DIR)/$(LIGHT_LAYER).svg
 BASE_SVG    := $(SVG_DIR)/$(BASE_LAYER).svg
 SVGS        := $(DARK_SVG) $(LIGHT_SVG) $(BASE_SVG)
 
+# Every .scad in the project root is a model to export. build/config.scad is
+# excluded by construction - it is generated, lives under build/, and is an
+# include rather than a model. Drop a new .scad next to pigpen.scad and it picks
+# up an STL and a full set of previews with no edit here; the generic rules at
+# the bottom of the file build them.
+SCAD_SRCS   := $(sort $(wildcard *.scad))
+SCAD_NAMES  := $(basename $(SCAD_SRCS))
+
 STL_ALL     := $(STL_DIR)/pigpen.stl
 STL_DARK    := $(STL_DIR)/pigpen-dark.stl
 STL_LIGHT   := $(STL_DIR)/pigpen-light.stl
 
-PREVIEWS    := $(IMG_DIR)/pigpen-iso.png \
-               $(IMG_DIR)/pigpen-top.png \
-               $(IMG_DIR)/pigpen-front.png
+# pigpen.scad also gets the two per-colour cuts; anything else gets the whole
+# model only.
+STLS        := $(patsubst %,$(STL_DIR)/%.stl,$(SCAD_NAMES)) $(STL_DARK) $(STL_LIGHT)
+
+PREVIEWS    := $(foreach n,$(SCAD_NAMES),\
+                 $(foreach v,$(VIEWS),$(IMG_DIR)/$(n)-$(v).png))
 
 TOTAL_H     := $(shell awk 'BEGIN { printf "%g", $(DARK_H) + $(LIGHT_H) }')
 
@@ -170,6 +202,31 @@ $(MAGICK) '$(1)' -fuzz 2% -trim +repage \
 	-bordercolor "$$bg" -border $(PREVIEW_MARGIN) '$(1)'
 endef
 
+# $(call export_stl,<output>,<PART>,<scad>)
+define export_stl
+@mkdir -p $(dir $(1))
+@echo 'openscad -> $(1) (PART=$(2))'
+$(call run_openscad, -o '$(1)' --export-format=$(STL_FORMAT) \
+	$(SCAD_DEFS) -D 'PART="$(2)"' '$(3)')
+endef
+
+# $(call render_view,<output>,<camera>,<projection>,<scad>)
+#
+# PNG export uses OpenSCAD's preview renderer, which honours color(); the full
+# CGAL render (--render) would draw everything in one colour instead.
+define render_view
+@mkdir -p $(dir $(1))
+@echo 'openscad -> $(1)'
+$(call run_openscad, -o '$(1)' $(SCAD_DEFS) -D 'PART="all"' \
+	--imgsize=$(IMG_SIZE) --camera=$(2) --viewall --autocenter \
+	--projection=$(3) --colorscheme='$(COLORSCHEME)' '$(4)')
+$(call trim_preview,$(1))
+endef
+
+# Views are named in lower case (they end up in filenames); their knobs are
+# upper case, like every other setting in this file.
+UPPER = $(shell echo '$(1)' | tr '[:lower:]' '[:upper:]')
+
 TRACE_ENV = \
 	TRACE_SCALE=$(TRACE_SCALE) \
 	TRACE_THRESHOLD=$(TRACE_THRESHOLD) \
@@ -188,10 +245,12 @@ GIMP_NOISE = 'surfacemap_x|libcfitsio|gimp_wire_read|gjs.*No such file|gimp_flus
 
 # ---------------------------------------------------------------- targets ----
 
-.PHONY: all help layers trace config scad stl stl-dark stl-light \
+.PHONY: all dist help layers trace config scad stl stl-dark stl-light \
         preview thumbs check layer-sheet gui clean distclean tools FORCE
 
 all: stl preview ## Trace, build every STL, and render the previews
+
+dist: all ## Alias for all: refresh everything committed under dist/
 
 help: ## Show this help
 	@echo 'Pigpen logo build. Targets:'
@@ -288,56 +347,38 @@ $(CONFIG): $(SVGS) tools/svg_bbox.py
 
 # --- solids ---
 
-stl: $(STL_ALL) $(STL_DARK) $(STL_LIGHT) ## Export combined and per-colour STLs
+stl: $(STLS) ## Export an STL for every .scad, plus the per-colour cuts
 
 stl-dark: $(STL_DARK)   ## Export just the dark base
 stl-light: $(STL_LIGHT) ## Export just the light top layer
 
-$(STL_DIR)/pigpen.stl: $(SCAD) $(CONFIG) $(SVGS)
-	@mkdir -p $(STL_DIR)
-	@echo 'openscad -> $@ (PART=all)'
-	$(call run_openscad, -o '$@' $(SCAD_DEFS) -D 'PART="all"' '$(SCAD)')
+# One STL per .scad in the project root. New models are picked up by the
+# wildcard, so this rule is the only one they need. Anything that imports the
+# traced SVGs is covered by the $(CONFIG)/$(SVGS) prerequisites; a standalone
+# model just ignores them.
+$(STL_DIR)/%.stl: %.scad $(CONFIG) $(SVGS)
+	$(call export_stl,$@,all,$<)
 
-$(STL_DIR)/pigpen-dark.stl: $(SCAD) $(CONFIG) $(SVGS)
-	@mkdir -p $(STL_DIR)
-	@echo 'openscad -> $@ (PART=dark)'
-	$(call run_openscad, -o '$@' $(SCAD_DEFS) -D 'PART="dark"' '$(SCAD)')
+# The two-colour cuts of pigpen.scad. Explicit rules, so they win over the
+# pattern above (which would otherwise go looking for a pigpen-dark.scad).
+$(STL_DARK): $(SCAD) $(CONFIG) $(SVGS)
+	$(call export_stl,$@,dark,$(SCAD))
 
-$(STL_DIR)/pigpen-light.stl: $(SCAD) $(CONFIG) $(SVGS)
-	@mkdir -p $(STL_DIR)
-	@echo 'openscad -> $@ (PART=light)'
-	$(call run_openscad, -o '$@' $(SCAD_DEFS) -D 'PART="light"' '$(SCAD)')
+$(STL_LIGHT): $(SCAD) $(CONFIG) $(SVGS)
+	$(call export_stl,$@,light,$(SCAD))
 
 # --- previews ---
 
-preview: $(PREVIEWS) ## Render iso / top / front thumbnails to build/img
+preview: $(PREVIEWS) ## Render iso / top / front views of every .scad
 thumbs: preview     ## Alias for preview
 
-# PNG export uses OpenSCAD's preview renderer, which honours color(); the full
-# CGAL render (--render) would draw everything in one colour instead.
-$(IMG_DIR)/pigpen-iso.png: $(SCAD) $(CONFIG) $(SVGS)
-	@mkdir -p $(IMG_DIR)
-	@echo 'openscad -> $@'
-	$(call run_openscad, -o '$@' $(SCAD_DEFS) -D 'PART="all"' \
-		--imgsize=$(IMG_SIZE) --camera=$(CAM_ISO) --viewall --autocenter \
-		--projection=p --colorscheme='$(COLORSCHEME)' '$(SCAD)')
-	$(call trim_preview,$@)
-
-$(IMG_DIR)/pigpen-top.png: $(SCAD) $(CONFIG) $(SVGS)
-	@mkdir -p $(IMG_DIR)
-	@echo 'openscad -> $@'
-	$(call run_openscad, -o '$@' $(SCAD_DEFS) -D 'PART="all"' \
-		--imgsize=$(IMG_SIZE) --camera=$(CAM_TOP) --viewall --autocenter \
-		--projection=o --colorscheme='$(COLORSCHEME)' '$(SCAD)')
-	$(call trim_preview,$@)
-
-$(IMG_DIR)/pigpen-front.png: $(SCAD) $(CONFIG) $(SVGS)
-	@mkdir -p $(IMG_DIR)
-	@echo 'openscad -> $@'
-	$(call run_openscad, -o '$@' $(SCAD_DEFS) -D 'PART="all"' \
-		--imgsize=$(IMG_SIZE) --camera=$(CAM_FRONT) --viewall --autocenter \
-		--projection=o --colorscheme='$(COLORSCHEME)' '$(SCAD)')
-	$(call trim_preview,$@)
+# One pattern rule per view, generated from VIEWS so a new view is a two-line
+# change up top. dist/img/<model>-<view>.png is built from <model>.scad.
+define preview_rule
+$$(IMG_DIR)/%-$(1).png: %.scad $$(CONFIG) $$(SVGS)
+	$$(call render_view,$$@,$$(CAM_$(call UPPER,$(1))),$$(PROJ_$(call UPPER,$(1))),$$<)
+endef
+$(foreach v,$(VIEWS),$(eval $(call preview_rule,$(v))))
 
 layer-sheet: $(DARK_PNG) $(LIGHT_PNG) ## Contact sheet of the raw layer split
 	@mkdir -p $(IMG_DIR)
@@ -349,7 +390,7 @@ layer-sheet: $(DARK_PNG) $(LIGHT_PNG) ## Contact sheet of the raw layer split
 
 # --- verification ---
 
-check: $(STL_ALL) $(STL_DARK) $(STL_LIGHT) ## Measure the STLs against the requested size
+check: $(STLS) ## Measure the STLs against the requested size
 	@echo '--- combined (expect $(WIDTH_MM) mm wide, $(TOTAL_H) mm tall) ---'
 	$(PYTHON) tools/stl_bbox.py '$(STL_ALL)' \
 		--expect-x $(WIDTH_MM) --expect-z $(TOTAL_H)
@@ -363,10 +404,10 @@ gui: $(CONFIG) $(SVGS) ## Open the model in the OpenSCAD GUI
 
 # --- housekeeping ---
 
-clean: ## Remove generated STLs, previews and the measured config
-	rm -rf '$(STL_DIR)' '$(IMG_DIR)' '$(CONFIG)'
+clean: ## Remove the generated artefacts in dist/ and the measured config
+	rm -rf '$(DIST)' '$(CONFIG)'
 
-distclean: ## Remove everything under build/, including the GIMP export
+distclean: clean ## Also remove everything under build/, including the GIMP export
 	rm -rf '$(BUILD)'
 
 FORCE:
