@@ -2,6 +2,12 @@
 # pigpen_logo.xcf. The finished artefacts live in dist/ and *are* committed.
 /build/
 
+# Python bytecode. tools/ is only ever run as scripts, so these are pure
+# byproducts of importing a tool (the test for keyhole_area does) and must never
+# be committed.
+__pycache__/
+*.py[cod]
+
 # OpenSCAD GUI leftovers
 *.stl
 *.csg
