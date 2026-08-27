@@ -56,7 +56,8 @@ All of this is committed, so the table doubles as the download list.
 | `dist/stl/pigpen.stl` | Both layers as one solid |
 | `dist/stl/pigpen-dark.stl` | Just the base |
 | `dist/stl/pigpen-light.stl` | Just the raised light layer, already sitting at z = `DARK_H` |
-| `dist/img/pigpen-{iso,top,front}.png` | Rendered previews, trimmed to the model |
+| `dist/img/pigpen-{iso,top,front,back}.png` | Rendered previews, trimmed to the model |
+| `dist/img/keyhole-map.png` | Where the keyhole slots sit on the plaque outline |
 | `dist/img/layers.png` | Contact sheet of the raw layer split, from `make layer-sheet` |
 
 The STLs are exported as binary (`STL_FORMAT=binstl`) — about a fifth the size
@@ -85,6 +86,11 @@ make preview BASE_MODE=knockout
 | `BASE_MODE` | `silhouette` | See below |
 | `DARK_LAYER` / `LIGHT_LAYER` | `DarkPart` / `LightPart` | Layer names in the `.xcf` |
 | `TRACE_SCALE` | `1` | Upsample before tracing; raise if fine detail looks faceted |
+| `KEYHOLES` | `true` | Recess keyhole slots into the back for wall mounting |
+| `KEYHOLE_HEAD_D` | `8.5` | Diameter of the opening the screw head passes through |
+| `KEYHOLE_SHANK_D` | `5.0` | Width of the slot the shank slides along |
+| `KEYHOLE_SLOT_LEN` | `9.0` | How far the plaque drops onto the screw |
+| `KEYHOLE_ROOF` | `1.4` | Material left over the pocket; `DARK_H` minus this is the pocket depth |
 | `VIEWS` | `iso top front` | Previews rendered per model; each needs a `CAM_`/`PROJ_` pair |
 | `STL_FORMAT` | `binstl` | `asciistl` if you want a readable mesh |
 
@@ -111,14 +117,47 @@ and writes a perfectly valid STL containing only the light layer. `make check`
 exists because of that failure mode, and the build now treats any OpenSCAD
 `ERROR:` line as fatal regardless of exit status.
 
+## Wall mounting
+
+Two keyhole slots are recessed into the back of the base — a round opening the
+screw head passes through, and a narrower slot above it. Hook the plaque over two
+screws and let it drop; the screws ride up the slots and the heads are trapped
+behind the material.
+
+![keyhole placement](dist/img/keyhole-map.png)
+
+At the defaults the slots sit **56.8 mm apart, 15.9 mm below the top edge**, with
+12.7 mm of material between each keyhole and the nearest edge.
+
+**Screw size is limited by `DARK_H`, not by the hole.** The pocket depth is
+`DARK_H - KEYHOLE_ROOF` = 2.1 mm at the defaults, which swallows a **#6** pan
+head (2.0 mm) but not a **#8** (2.4 mm). For a #8, build with `DARK_H=4` or
+higher. The build asserts rather than quietly producing a pocket too shallow to
+hide the head.
+
+There is no boss on the back to gain that depth, deliberately: the plaque prints
+back-face-down, so a boss would put only two small pads on the bed and leave the
+entire silhouette as an unsupported overhang.
+
+Placement is not hand-picked. `tools/keyhole_sites.py` computes an exact distance
+transform of the plaque outline and chooses the widest symmetric pair whose whole
+footprint — head circle *and* slot — keeps `KEYHOLE_WALL` of material to the
+nearest edge, then fails the build if no such pair exists. So changing
+`WIDTH_MM` or the screw size re-solves the placement instead of silently pushing
+a keyhole out through the side.
+
 ## Printing notes
 
+- Print **back-face-down**, light details up. That puts the full silhouette on the
+  bed: no support, no bridging.
 - The smallest features are the little dots in the light layer: about **1.33 mm
   across and 3.5 mm tall** at `WIDTH_MM=120`. Printable with a 0.4 mm nozzle but
   delicate — scale up, or reduce `LIGHT_H`, if they snap off.
 - The light layer is 20 separate pieces. Fine for a filament swap or a
   multi-material printer; painful if you were planning to print it separately and
   glue it on.
+- The keyhole roof is 1.4 mm — about 4 layers at 0.3 mm. Keep the top solid layer
+  count high enough that it does not print as a partially-bridged skin.
 
 ## How the sizing works
 
@@ -134,6 +173,12 @@ wrong scale, so it is pinned down rather than trusted:
 - `WIDTH_MM` is then a plain ratio against that measurement.
 - `make check` measures the finished STLs and fails if they are more than
   0.05 mm off.
+
+`make check` also verifies the keyholes were actually cut: it rebuilds the base
+with `KEYHOLES=false`, compares the two volumes, and fails if the missing
+material differs by more than 2% from the area the placement solver computed. A
+bounding box cannot see a pocket, and a keyhole that slid off the edge would
+still export a valid STL.
 
 Every layer is exported at full canvas size, which is what keeps the layers
 registered to each other: all of them share one coordinate frame, so nothing has
