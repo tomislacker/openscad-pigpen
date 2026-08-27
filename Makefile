@@ -113,6 +113,11 @@ COLORSCHEME ?= Tomorrow Night
 # Margin, in pixels, left around the model after trimming.
 PREVIEW_MARGIN ?= 40
 
+# ImageMagick stamps a tIME chunk into every PNG it writes. dist/ is committed,
+# so without this every rebuild reports six modified previews whose pixels are
+# byte-for-byte identical.
+PNG_REPRODUCIBLE = -strip -define png:exclude-chunk=date,time
+
 # OpenSCAD gimbal camera: translate x,y,z then rotate x,y,z then distance.
 # Distance is left at 0 because --viewall computes it. Projection is p
 # (perspective) or o (orthographic); the flat-on views read better square-on.
@@ -269,7 +274,7 @@ endef
 define trim_preview
 @bg=$$($(MAGICK) '$(1)' -format '%[pixel:p{0,0}]' info:); \
 $(MAGICK) '$(1)' -fuzz 2% -trim +repage \
-	-bordercolor "$$bg" -border $(PREVIEW_MARGIN) '$(1)'
+	-bordercolor "$$bg" -border $(PREVIEW_MARGIN) $(PNG_REPRODUCIBLE) '$(1)'
 endef
 
 # $(call export_stl,<output>,<PART>,<scad>)
@@ -488,7 +493,7 @@ $(KEYHOLE_MAP): $(KEYHOLE_SCAD) $(BASE_PNG)
 	@mkdir -p $(IMG_DIR)
 	$(MAGICK) '$(BASE_PNG)' -alpha extract -threshold 50% \
 		-background '#1d1f21' -alpha off -fill '#c05050' -stroke none \
-		-draw '@$(KEYHOLE_DRAW)' -resize 1000x '$@'
+		-draw '@$(KEYHOLE_DRAW)' -resize 1000x $(PNG_REPRODUCIBLE) '$@'
 	@echo 'wrote $@'
 
 layer-sheet: $(LAYER_SHEET) ## Contact sheet of the raw layer split
@@ -497,7 +502,7 @@ $(LAYER_SHEET): $(DARK_PNG) $(LIGHT_PNG)
 	$(MAGICK) \
 		\( '$(DARK_PNG)'  -background '#492517' -alpha remove -alpha off -resize 900x \) \
 		\( '$(LIGHT_PNG)' -background '#a5a5a5' -alpha remove -alpha off -resize 900x \) \
-		-append '$@'
+		-append $(PNG_REPRODUCIBLE) '$@'
 	@echo 'wrote $@'
 
 # --- verification ---
