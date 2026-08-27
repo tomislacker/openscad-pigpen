@@ -16,6 +16,11 @@
 // a stale guess would silently render at the wrong scale.
 include <build/config.scad>
 
+// Defines KEYHOLE_SITES: where the keyholes go, in the same artwork pixel units
+// as ART_CX/ART_CY, chosen and verified against the plaque silhouette by
+// tools/keyhole_sites.py. Only needed when KEYHOLES is on.
+include <build/keyholes.scad>
+
 /* [Size] */
 
 // Printed width of the artwork, in mm. Height follows from the aspect ratio.
@@ -43,6 +48,26 @@ BASE_MODE = "silhouette";  // ["silhouette", "knockout"]
 
 // Centre the model on the origin. Off puts the artwork's lower-left at (0,0).
 CENTER = true;
+
+/* [Wall mounting] */
+
+// Recess keyhole slots into the back of the base.
+KEYHOLES = true;
+
+// Diameter of the round part the screw head passes through. 8.5 mm clears a
+// #6 (6.4 mm) or #8 (8.0 mm) pan head.
+KEYHOLE_HEAD_D = 8.5;
+// Width of the slot the shank slides along. 5 mm clears a #6 or #8 shank.
+KEYHOLE_SHANK_D = 5.0;
+// How far the plaque drops onto the screw once hooked on.
+KEYHOLE_SLOT_LEN = 9.0;
+// Material left between the pocket and the front face. This is what carries
+// the plaque's weight, and it is also the thing that gets thin if you reduce
+// DARK_H.
+KEYHOLE_ROOF = 1.4;
+// Material kept between the keyhole and the edge of the plaque. Consumed by
+// tools/keyhole_sites.py when it chooses where the keyholes go, not here.
+KEYHOLE_WALL = 1.5;
 
 /* [Files] */
 
@@ -74,8 +99,26 @@ assert(ART_W > 0 && ART_H > 0, "measured artwork has no extent - re-run `make tr
 SCALE = is_undef(ART_W) ? 1 : WIDTH_MM / ART_W;
 HEIGHT_MM = is_undef(ART_H) ? 0 : ART_H * SCALE;
 
+// The pocket has to fit a screw head, and whatever is left over the top of it
+// is what actually holds the plaque on the wall. There is no room to add a boss
+// on the back: the plaque prints back-face-down, so a boss would leave the whole
+// silhouette as an unsupported overhang. That makes DARK_H the entire budget.
+KEYHOLE_POCKET_D = DARK_H - KEYHOLE_ROOF;
+
+assert(!KEYHOLES || KEYHOLE_POCKET_D >= 2.0,
+       str("KEYHOLES needs DARK_H >= ", KEYHOLE_ROOF + 2.0, " mm to sink a screw ",
+           "head (DARK_H is ", DARK_H, ", leaving a ", KEYHOLE_POCKET_D,
+           " mm pocket). Raise DARK_H, or lower KEYHOLE_ROOF if you accept a ",
+           "thinner face over the pocket."));
+assert(!KEYHOLES || !is_undef(KEYHOLE_SITES),
+       "build/keyholes.scad is missing - run `make` before rendering.");
+assert(KEYHOLE_SHANK_D < KEYHOLE_HEAD_D,
+       "KEYHOLE_SHANK_D must be smaller than KEYHOLE_HEAD_D or the head pulls straight through.");
+
 echo(str("pigpen: ", WIDTH_MM, " x ", HEIGHT_MM, " x ", DARK_H + LIGHT_H,
-         " mm  (base=", BASE_MODE, ", part=", PART, ")"));
+         " mm  (base=", BASE_MODE, ", part=", PART,
+         ", keyholes=", KEYHOLES ? str(len(KEYHOLE_SITES), " @ ", KEYHOLE_POCKET_D, "mm deep")
+                                 : "off", ")"));
 
 // Pull one traced layer into place: scaled to the requested width and shifted so
 // the *combined* artwork, not this layer's own extent, lands on the origin. Both
@@ -104,10 +147,44 @@ module base_2d() {
     }
 }
 
+// Artwork pixel coordinates -> model millimetres, matching placed() exactly so
+// the keyholes stay put relative to the artwork at any WIDTH_MM.
+function art_offset() = CENTER ? [-ART_CX, -ART_CY] : [-ART_X0, -ART_Y0];
+function site_mm(site) = (site + art_offset()) * SCALE;
+
+// The classic keyhole outline: a round opening the screw head passes through,
+// and a narrower slot above it. The slot points *up* because the plaque is
+// hooked over the screw and then released - relative to the plaque, the screw
+// travels upward into the slot, where the narrow part traps the head.
+module keyhole_2d() {
+    union() {
+        circle(d = KEYHOLE_HEAD_D, $fn = 64);
+        translate([-KEYHOLE_SHANK_D / 2, 0])
+            square([KEYHOLE_SHANK_D, KEYHOLE_SLOT_LEN]);
+        translate([0, KEYHOLE_SLOT_LEN])
+            circle(d = KEYHOLE_SHANK_D, $fn = 48);
+    }
+}
+
+// Pocketed into the back face only. Starting slightly below z = 0 keeps the
+// opening from being coplanar with the base's underside.
+module keyhole_cuts() {
+    eps = 0.01;
+    for (site = KEYHOLE_SITES) {
+        pos = site_mm(site);
+        translate([pos[0], pos[1], -eps])
+            linear_extrude(height = KEYHOLE_POCKET_D + eps)
+                keyhole_2d();
+    }
+}
+
 module dark_part() {
     color(DARK_COLOR)
-        linear_extrude(height = DARK_H)
-            base_2d();
+        difference() {
+            linear_extrude(height = DARK_H)
+                base_2d();
+            if (KEYHOLES) keyhole_cuts();
+        }
 }
 
 module light_part() {
