@@ -1,6 +1,6 @@
 # openscad-pigpen
 
-Turns the layered Pigpen logo in `pigpen_logo.xcf` into a printable two-layer
+Turns the layered Pigpen logo in `pigpen_logo.svg` into a printable two-layer
 plaque: a dark base with the light details raised on top of it.
 
 ![Pigpen plaque, isometric view](dist/img/pigpen-iso.png)
@@ -14,8 +14,8 @@ of the toolchain below. GitHub renders those STLs in its own 3-D viewer.
 | ![top](dist/img/pigpen-top.png) | ![front](dist/img/pigpen-front.png) |
 
 ```
-pigpen_logo.xcf
-  │  make layers     GIMP exports each layer to a full-canvas PNG, alpha intact
+pigpen_logo.svg + StratoRegular-2d5o.ttf
+  │  make layers     Inkscape renders each SVG group to a full-canvas PNG
   ▼
 build/layers/*.png
   │  make trace      alpha → 1-bit mask → potrace → SVG
@@ -40,7 +40,7 @@ edit there.
 ## Quick start
 
 ```sh
-make tools     # confirm gimp, openscad, potrace, magick, python3 are installed
+make tools     # confirm inkscape, openscad, potrace, magick, python3 are installed
 make all       # trace, build all three STLs, render the previews
 make check     # measure the STLs and assert they are the requested size
 ```
@@ -58,7 +58,7 @@ All of this is committed, so the table doubles as the download list.
 | `dist/stl/pigpen-light.stl` | Just the raised light layer, already sitting at z = `DARK_H` |
 | `dist/img/pigpen-{iso,top,front,back}.png` | Rendered previews, trimmed to the model |
 | `dist/img/keyhole-map.png` | Where the keyhole slots sit on the plaque outline |
-| `dist/img/layers.png` | Contact sheet of the raw layer split, from `make layer-sheet` |
+| `dist/img/layers.png` | Contact sheet of the two rendered layers, from `make layer-sheet` |
 
 The STLs are exported as binary (`STL_FORMAT=binstl`) — about a fifth the size
 of OpenSCAD's ASCII default, which is worth caring about for a file that lives
@@ -84,7 +84,8 @@ make preview BASE_MODE=knockout
 | `DARK_H` | `3.5` | Base thickness, mm |
 | `LIGHT_H` | `3.5` | Raised layer thickness, mm |
 | `BASE_MODE` | `silhouette` | See below |
-| `DARK_LAYER` / `LIGHT_LAYER` | `DarkPart` / `LightPart` | Layer names in the `.xcf` |
+| `DARK_LAYER` / `LIGHT_LAYER` | `base` / `details` | Group ids in the source SVG |
+| `RENDER_W` / `RENDER_H` | `3600` / `1800` | Canvas the layers are rendered at |
 | `TRACE_SCALE` | `1` | Upsample before tracing; raise if fine detail looks faceted |
 | `KEYHOLES` | `true` | Recess keyhole slots into the back for wall mounting |
 | `KEYHOLE_HEAD_D` | `8.5` | Diameter of the opening the screw head passes through |
@@ -150,10 +151,12 @@ a keyhole out through the side.
 
 - Print **back-face-down**, light details up. That puts the full silhouette on the
   bed: no support, no bridging.
-- The smallest features are the little dots in the light layer: about **1.33 mm
-  across and 3.5 mm tall** at `WIDTH_MM=120`. Printable with a 0.4 mm nozzle but
-  delicate — scale up, or reduce `LIGHT_H`, if they snap off.
-- The light layer is 20 separate pieces. Fine for a filament swap or a
+- Every stroke in the wordmark is at least **1.6 mm** wide, so the script face
+  prints comfortably on a 0.4 mm nozzle.
+- The smallest features are the little dots in the light layer: about **1.38 mm
+  across and 3.5 mm tall** at `WIDTH_MM=120`. Printable but delicate — scale up,
+  or reduce `LIGHT_H`, if they snap off.
+- The light layer is 16 separate pieces. Fine for a filament swap or a
   multi-material printer; painful if you were planning to print it separately and
   glue it on.
 - The keyhole roof is 1.4 mm — about 4 layers at 0.3 mm. Keep the top solid layer
@@ -180,16 +183,35 @@ material differs by more than 2% from the area the placement solver computed. A
 bounding box cannot see a pocket, and a keyhole that slid off the edge would
 still export a valid STL.
 
-Every layer is exported at full canvas size, which is what keeps the layers
+Every layer is rendered at full canvas size, which is what keeps the layers
 registered to each other: all of them share one coordinate frame, so nothing has
 to be re-aligned downstream.
 
+## The font
+
+The wordmark is set in **Strato**, bundled here as `StratoRegular-2d5o.ttf`. It is
+not installed system-wide, and that matters: Inkscape resolves fonts through
+fontconfig and silently falls back to a default sans when it cannot find one.
+
+`tools/render_layer.sh` builds a throwaway fontconfig that layers this directory
+on top of the system configuration, so the build finds Strato without installing
+anything. Nothing needs to be added to your system fonts.
+
+This is not hypothetical. The `pigpen_logo.xcf` that used to drive this build was
+rasterised on a machine without Strato, so it had **Noto Sans baked into it** — the
+model was being printed in the wrong typeface. Rendering from `pigpen_logo.svg`
+with the bundled font is what fixes that, and it is why the `.xcf` is no longer
+part of the pipeline. It is kept in the tree as the original hand-split artwork;
+`git log` has the GIMP tooling that used to read it.
+
 ## Requirements
 
-GIMP 3.x (`gimp-console`, uses the `python-fu-eval` batch interpreter),
-OpenSCAD, potrace, ImageMagick 7 (`magick`), Python 3. `make tools` checks.
+Inkscape, OpenSCAD, potrace, ImageMagick 7 (`magick`), Python 3. `make tools`
+checks. GIMP is no longer needed.
 
-## If you re-edit the `.xcf`
+## If you re-edit the artwork
 
-Just run `make` again. If you rename or add layers, `make layers` prints what it
-found, and a mismatch tells you which names are available.
+Just run `make` again. The layers come from the `base` and `details` groups in
+`pigpen_logo.svg`; if you rename them, `make` lists the ids that actually exist.
+Keep every layer on the one canvas — that shared pixel grid is what keeps them
+registered to each other.
