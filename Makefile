@@ -126,6 +126,16 @@ PROJ_FRONT  ?= o
 # and PROJ_<NAME> above; nothing else.
 VIEWS       ?= iso top front
 
+# --------------------------------------------------- multi-material 3MF -----
+
+# Which extruder prints which layer, and what the parts are called in the
+# slicer's object list. Extruders are numbered from 1.
+MODEL_NAME     ?= Pigpen
+PART_DARK      ?= Base
+PART_LIGHT     ?= Accent
+EXTRUDER_DARK  ?= 1
+EXTRUDER_LIGHT ?= 2
+
 # --------------------------------------------------------------- exports ----
 
 # binstl is ~5x smaller than OpenSCAD's default ASCII STL for the same mesh,
@@ -140,6 +150,8 @@ OPENSCAD    ?= openscad
 POTRACE     ?= potrace
 MAGICK      ?= magick
 PYTHON      ?= python3
+# Only used by `make check` to validate the 3MF; not needed to build anything.
+PRUSA_SLICER ?= prusa-slicer
 
 # ------------------------------------------------------------- derived ------
 
@@ -169,6 +181,9 @@ SVGS        := $(DARK_SVG) $(LIGHT_SVG) $(BASE_SVG)
 # the bottom of the file build them.
 SCAD_SRCS   := $(sort $(wildcard *.scad))
 SCAD_NAMES  := $(basename $(SCAD_SRCS))
+
+MMU_3MF     := $(DIST)/pigpen.3mf
+MMU_STAMP   := $(BUILD)/.3mf-flags
 
 STL_ALL     := $(STL_DIR)/pigpen.stl
 STL_DARK    := $(STL_DIR)/pigpen-dark.stl
@@ -268,10 +283,11 @@ TRACE_ENV = \
 
 # ---------------------------------------------------------------- targets ----
 
-.PHONY: all dist help layers trace config scad stl stl-dark stl-light \
+.PHONY: all dist help layers trace config scad stl stl-dark stl-light 3mf \
+        check-3mf \
         preview thumbs check layer-sheet gui clean distclean tools FORCE
 
-all: stl preview ## Trace, build every STL, and render the previews
+all: stl 3mf preview ## Trace, build the STLs and 3MF, and render the previews
 
 dist: all ## Alias for all: refresh everything committed under dist/
 
@@ -367,6 +383,27 @@ $(STL_DARK): $(SCAD) $(MODEL_DEPS)
 $(STL_LIGHT): $(SCAD) $(MODEL_DEPS)
 	$(call export_stl,$@,light,$(SCAD))
 
+# --- multi-material 3MF ---
+
+3mf: $(MMU_3MF) ## Pack the two colours into a multi-material 3MF
+
+# Built from the two per-colour STLs rather than straight from OpenSCAD, which
+# can write a 3MF but has no way to say which extruder a solid belongs to.
+# Repack when the extruder assignment or the part names change, not just when
+# the meshes do; neither of those is a file make can watch.
+MMU_ENV = name=$(MODEL_NAME) dark=$(PART_DARK):$(EXTRUDER_DARK) \
+	light=$(PART_LIGHT):$(EXTRUDER_LIGHT)
+
+$(MMU_STAMP): FORCE
+	@mkdir -p $(BUILD)
+	@echo '$(MMU_ENV)' | cmp -s - '$@' || echo '$(MMU_ENV)' > '$@'
+
+$(MMU_3MF): $(STL_DARK) $(STL_LIGHT) tools/make_3mf.py $(MMU_STAMP)
+	@mkdir -p $(dir $@)
+	$(PYTHON) tools/make_3mf.py --out '$@' --name '$(MODEL_NAME)' \
+		--part '$(STL_DARK):$(PART_DARK):$(EXTRUDER_DARK)' \
+		--part '$(STL_LIGHT):$(PART_LIGHT):$(EXTRUDER_LIGHT)'
+
 # --- previews ---
 
 preview: $(PREVIEWS) ## Render iso / top / front views of every .scad
@@ -402,6 +439,24 @@ check: $(STLS) ## Measure the STLs against the requested size
 	$(PYTHON) tools/stl_bbox.py '$(STL_DARK)' --expect-z $(DARK_H)
 	@echo '--- light layer (expect $(LIGHT_H) mm tall) ---'
 	$(PYTHON) tools/stl_bbox.py '$(STL_LIGHT)' --expect-z $(LIGHT_H)
+	@$(MAKE) --no-print-directory check-3mf
+
+# PrusaSlicer is not needed to *build* the 3MF, only to confirm it reads back the
+# way it should, so this is skipped rather than failed when it is absent. The
+# manifold check is the one that matters: welding the two STLs into one indexed
+# mesh is where this could silently produce something the slicer has to repair.
+check-3mf: $(MMU_3MF)
+	@echo '--- 3mf (expect manifold, $(WIDTH_MM) mm wide, $(TOTAL_H) mm tall) ---'
+	@if ! command -v $(PRUSA_SLICER) >/dev/null 2>&1; then \
+		echo "  skipped: $(PRUSA_SLICER) not installed"; exit 0; \
+	fi; \
+	info=$$($(PRUSA_SLICER) --info '$(MMU_3MF)' 2>/dev/null); \
+	echo "$$info" | grep -E 'size_|manifold|number_of_facets' | sed 's/^/  /'; \
+	echo "$$info" | awk -v w='$(WIDTH_MM)' -v h='$(TOTAL_H)' -F' = ' ' \
+	  /^manifold/   { if ($$2 != "yes") { print "FAIL: 3mf mesh is not manifold"; bad=1 } } \
+	  /^size_x/     { d=$$2-w; if (d<0) d=-d; if (d>0.05) { print "FAIL: 3mf width " $$2; bad=1 } } \
+	  /^size_z/     { d=$$2-h; if (d<0) d=-d; if (d>0.05) { print "FAIL: 3mf height " $$2; bad=1 } } \
+	  END { if (bad) exit 1; print "OK: 3mf loads clean and measures right" }'
 gui: $(MODEL_DEPS) ## Open the model in the OpenSCAD GUI
 	$(OPENSCAD) '$(SCAD)' &
 
