@@ -53,6 +53,7 @@ All of this is committed, so the table doubles as the download list.
 
 | File | What it is |
 | --- | --- |
+| `dist/pigpen.3mf` | **Multi-material project**: both colours, each assigned to an extruder |
 | `dist/stl/pigpen.stl` | Both layers as one solid |
 | `dist/stl/pigpen-dark.stl` | Just the base |
 | `dist/stl/pigpen-light.stl` | Just the raised light layer, already sitting at z = `DARK_H` |
@@ -63,10 +64,32 @@ The STLs are exported as binary (`STL_FORMAT=binstl`) — about a fifth the size
 of OpenSCAD's ASCII default, which is worth caring about for a file that lives
 in git history. `make clean` deletes `dist/`; `make all` puts it back.
 
-The two part STLs are in a shared coordinate frame, so a slicer that imports both
-lines them up without any manual positioning. That is the route for a two-colour
-print: load them as separate objects/extruders, or slice the combined STL and put
-a filament change at `DARK_H`.
+## Two-colour printing
+
+For a multi-material printer, load **`dist/pigpen.3mf`**. It carries both colours
+as two parts of a *single object*, already assigned to extruder 1 (base) and
+extruder 2 (accent):
+
+```sh
+prusa-slicer dist/pigpen.3mf
+```
+
+Nothing needs aligning. The parts are volumes of one object rather than two
+separate objects, so the slicer treats them as rigidly bound and the accent
+cannot be dragged out of register with the base.
+
+Verified end to end with PrusaSlicer: it reloads the file with both volumes and
+both extruder assignments intact, and slicing produces G-code with `T0`/`T1` tool
+changes and separate filament totals. OrcaSlicer imports the geometry correctly
+too (manifold, correct size), though only the import was checked — the
+per-volume extruder assignment is a PrusaSlicer extension, so confirm the tool
+assignment there if you slice with something else.
+
+Swap which filament goes where with `make 3mf EXTRUDER_DARK=2 EXTRUDER_LIGHT=1`.
+
+If you would rather not use the 3MF, the two part STLs share one coordinate
+frame, so importing both into any slicer lines them up too. On a single-extruder
+printer, slice `dist/stl/pigpen.stl` and insert a filament change at `DARK_H`.
 
 ## Settings
 
@@ -88,6 +111,8 @@ make preview BASE_MODE=knockout
 | `TRACE_SCALE` | `1` | Upsample before tracing; raise if fine detail looks faceted |
 | `VIEWS` | `iso top front` | Previews rendered per model; each needs a `CAM_`/`PROJ_` pair |
 | `STL_FORMAT` | `binstl` | `asciistl` if you want a readable mesh |
+| `EXTRUDER_DARK` / `EXTRUDER_LIGHT` | `1` / `2` | Which extruder prints each colour in the 3MF |
+| `PART_DARK` / `PART_LIGHT` | `Base` / `Accent` | Part names shown in the slicer |
 
 At the defaults the model is **120 × 52.85 × 7 mm**.
 
@@ -138,7 +163,9 @@ wrong scale, so it is pinned down rather than trusted:
   extrema, not just taking control points — and writes `build/config.scad`.
 - `WIDTH_MM` is then a plain ratio against that measurement.
 - `make check` measures the finished STLs and fails if they are more than
-  0.05 mm off.
+  0.05 mm off, and loads the 3MF back through PrusaSlicer to confirm it is
+  manifold and the right size. Welding two STLs into one indexed mesh is where
+  the 3MF could silently produce something a slicer has to repair.
 
 Every layer is rendered at full canvas size, which is what keeps the layers
 registered to each other: all of them share one coordinate frame, so nothing has
@@ -165,6 +192,11 @@ part of the pipeline. It is kept in the tree as the original hand-split artwork;
 
 Inkscape, OpenSCAD, potrace, ImageMagick 7 (`magick`), Python 3. `make tools`
 checks. GIMP is no longer needed.
+
+The 3MF is written by `tools/make_3mf.py` using only the Python standard library,
+so no slicer is needed to *build* it. PrusaSlicer is used by `make check` to
+confirm the file reads back correctly, and that step is skipped rather than
+failed when it is not installed.
 
 ## If you re-edit the artwork
 
