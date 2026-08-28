@@ -1,9 +1,9 @@
-// Pigpen logo - two-layer extrusion of the traced XCF layers.
+// Pigpen logo - two-layer extrusion of the traced artwork layers.
 //
 // The SVGs this imports are generated; run `make` before opening this in the
 // OpenSCAD GUI. The Makefile drives the whole pipeline:
 //
-//     pigpen_logo.xcf -> build/layers/*.png -> build/svg/*.svg -> this file
+//     pigpen_logo.svg -> build/layers/*.png -> build/svg/*.svg -> this file
 //
 // Sizes here are the defaults. `make` overrides them with -D, so
 // `make stl WIDTH_MM=200 DARK_H=4` does what you would expect without editing
@@ -36,14 +36,14 @@ LIGHT_H = 3.5;       // [0.2:0.1:20]
 // print; "all" is the combined model.
 PART = "all";        // ["all", "dark", "light"]
 
-// How to build the base. In the source artwork the light details are knocked
-// *out* of the dark layer, so the two are complementary rather than stacked.
-//   silhouette - base is dark + light merged, so the light layer always has
-//                something solid underneath it. This is the printable choice.
-//   knockout   - base is the dark layer exactly as drawn, holes and all. The
-//                light layer then floats above those holes with nothing
-//                supporting it. Useful for inspecting the artwork, not for
-//                printing.
+// How to build the base.
+//   silhouette - base is the dark and light layers merged, so the light layer
+//                always has something solid underneath it.
+//   knockout   - base is the dark layer exactly as drawn.
+// With the current artwork these are the same solid: the light details sit
+// entirely inside the dark group, so merging adds nothing. They diverge only if
+// the artwork changes so that some light detail pokes outside the dark shape,
+// which under knockout would leave it floating with nothing supporting it.
 BASE_MODE = "silhouette";  // ["silhouette", "knockout"]
 
 // Centre the model on the origin. Off puts the artwork's lower-left at (0,0).
@@ -71,9 +71,12 @@ KEYHOLE_WALL = 1.5;
 
 /* [Files] */
 
-DARK_SVG = "build/svg/DarkPart.svg";
-LIGHT_SVG = "build/svg/LightPart.svg";
-// Dark and light merged as masks and traced once, rather than unioned here.
+// Named for the groups they were rendered from in pigpen_logo.svg. `make`
+// overrides these with -D; they are the defaults so the file still opens
+// standalone in the GUI after a build.
+DARK_SVG = "build/svg/base.svg";
+LIGHT_SVG = "build/svg/details.svg";
+// The two layers merged as masks and traced once, rather than unioned here.
 // See BASE_MODE above and the note in the Makefile for why.
 BASE_SVG = "build/svg/base-silhouette.svg";
 
@@ -133,11 +136,10 @@ module placed(file) {
 module base_2d() {
     if (BASE_MODE == "silhouette") {
         // Deliberately a single import, not union(placed(DARK), placed(LIGHT)).
-        // The two layers were knocked out of each other, so their traced
-        // outlines run along the same edge from opposite sides; unioning them
-        // here produces contours that touch at single points, and extruding
-        // that yields a mesh CGAL will not accept. The merge is done on the
-        // masks before tracing instead.
+        // Unioning two separately traced outlines that run along a shared edge
+        // produces contours touching at single points, and extruding that
+        // yields a mesh CGAL will not accept. The merge is done on the masks
+        // before tracing instead.
         placed(BASE_SVG);
     } else if (BASE_MODE == "knockout") {
         placed(DARK_SVG);
