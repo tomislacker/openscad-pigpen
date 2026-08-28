@@ -20,12 +20,17 @@ include <build/config.scad>
 
 // Printed width of the artwork, in mm. Height follows from the aspect ratio.
 WIDTH_MM = 120;      // [20:1:400]
-// Thickness of the dark base layer, in mm. 1.2 is six layers at 0.2: thin
-// enough to stay flat, thick enough not to feel flimsy across 120 mm.
+// Thickness of the dark base layer, in mm.
 DARK_H = 1.2;        // [0.2:0.1:20]
-// Thickness of the light layer on top, in mm. 0.6 is three layers at 0.2, which
-// is what it takes for a light colour to read as fully opaque over a dark one.
-LIGHT_H = 0.6;       // [0.2:0.1:20]
+// Thickness of the light layer on top, in mm.
+LIGHT_H = 1.0;       // [0.2:0.1:20]
+
+// No part of the model may be shorter than this. Opacity and printability are
+// satisfied well below 1 mm - the accent is a raised island on a solid base, so
+// its width is what makes it fragile, not its height - but a taller accent gives
+// a more pronounced relief, reads better at an angle, and leaves room for a full
+// stack of top solid layers instead of an almost-all-solid sliver.
+MIN_PART_H = 1.0;
 
 /* [Slicing] */
 
@@ -33,9 +38,12 @@ LIGHT_H = 0.6;       // [0.2:0.1:20]
 // and that plane has to land exactly on a layer boundary: if it does not, the
 // slicer cannot split the layer and prints the whole of it in one colour, so a
 // sliver of the base comes out in the accent filament or the reverse.
-LAYER_H = 0.2;       // [0.05:0.05:0.4]
+LAYER_H = 0.1;       // [0.05:0.05:0.4]
 // First layer height, when your profile differs from LAYER_H. Everything above
 // the first layer is stacked at LAYER_H, so the first one shifts every boundary.
+// 0.2 is what most 0.1 mm profiles use, but not all of them: a profile with a
+// 0.15 mm first layer puts DARK_H=1.2 half a layer out, and the assert below
+// catches that rather than letting it print wrong.
 FIRST_LAYER_H = 0.2; // [0.05:0.05:0.4]
 
 /* [Build] */
@@ -105,6 +113,10 @@ assert(whole(LIGHT_LAYERS),
            ". The top of the accent would land mid-layer."));
 assert(LIGHT_LAYERS >= 1,
        "LIGHT_H is thinner than one layer - the accent would not be printed at all.");
+assert(DARK_H >= MIN_PART_H,
+       str("DARK_H (", DARK_H, ") is below MIN_PART_H (", MIN_PART_H, ")."));
+assert(LIGHT_H >= MIN_PART_H,
+       str("LIGHT_H (", LIGHT_H, ") is below MIN_PART_H (", MIN_PART_H, ")."));
 
 // Guarded so that a missing config.scad produces the assertion above and
 // nothing else; unguarded, OpenSCAD evaluates these first and buries the real

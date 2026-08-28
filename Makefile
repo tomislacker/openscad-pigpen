@@ -69,18 +69,18 @@ WIDTH_MM    ?= 120
 # colours meet at z = DARK_H, and a boundary that lands mid-layer cannot be
 # split, so the slicer prints that whole layer in one filament. pigpen.scad
 # asserts this rather than letting it through.
-#   DARK_H  1.2 = 6 layers at 0.2. Thin enough to stay flat, thick enough not to
-#           feel flimsy across 120 mm. Stiffness goes as the cube of thickness,
-#           so going lower gets floppy quickly.
-#   LIGHT_H 0.6 = 3 layers at 0.2, which is what a light colour needs to read as
-#           fully opaque over a dark one.
-# 0.8 / 0.4 slices cleanly and is the practical floor; see the README.
+# Neither may be under MIN_PART_H (1.0 mm, enforced in pigpen.scad).
+#   DARK_H  1.2 = 11 layers. Stiffness goes as the cube of thickness, so going
+#           much lower gets floppy across a 120 mm span.
+#   LIGHT_H 1.0 = 10 layers. Opacity is satisfied by about 3 layers; the rest
+#           buys relief depth and a proper stack of top solid layers.
 DARK_H      ?= 1.2
-LIGHT_H     ?= 0.6
+LIGHT_H     ?= 1.0
 
-# The layer height these are checked against. Set FIRST_LAYER_H if your profile
-# uses a different first layer, since that shifts every boundary above it.
-LAYER_H       ?= 0.2
+# The layer grid the two thicknesses are checked against. FIRST_LAYER_H matters:
+# most 0.1 mm profiles start at 0.2, but a 0.15 mm first layer puts DARK_H=1.2
+# half a layer out and the build will say so.
+LAYER_H       ?= 0.1
 FIRST_LAYER_H ?= 0.2
 
 # silhouette = dark and light merged into a solid base, so the light layer is

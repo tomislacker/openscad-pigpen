@@ -104,9 +104,9 @@ make preview BASE_MODE=knockout
 | --- | --- | --- |
 | `WIDTH_MM` | `120` | Printed width of the artwork; height follows the aspect ratio |
 | `DARK_H` | `1.2` | Base thickness, mm — must be a whole number of layers |
-| `LIGHT_H` | `0.6` | Raised accent thickness, mm — must be a whole number of layers |
-| `LAYER_H` | `0.2` | Layer height the above are checked against |
-| `FIRST_LAYER_H` | `0.2` | First layer height, if your profile differs |
+| `LIGHT_H` | `1.0` | Raised accent thickness, mm — must be a whole number of layers |
+| `LAYER_H` | `0.1` | Layer height the above are checked against |
+| `FIRST_LAYER_H` | `0.2` | First layer height; **set this if your profile differs** |
 | `BASE_MODE` | `silhouette` | See below |
 | `DARK_LAYER` / `LIGHT_LAYER` | `base` / `details` | Group ids in the source SVG |
 | `RENDER_W` / `RENDER_H` | `3600` / `1800` | Canvas the layers are rendered at |
@@ -116,32 +116,28 @@ make preview BASE_MODE=knockout
 | `EXTRUDER_DARK` / `EXTRUDER_LIGHT` | `1` / `2` | Which extruder prints each colour in the 3MF |
 | `PART_DARK` / `PART_LIGHT` | `Base` / `Accent` | Part names shown in the slicer |
 
-At the defaults the model is **120 × 52.89 × 1.8 mm** — a 1.2 mm base with a
-0.6 mm raised accent. See [Height and layers](#height-and-layers).
+At the defaults the model is **120 × 52.89 × 2.2 mm** — a 1.2 mm base with a
+1.0 mm raised accent, 21 layers at 0.1 mm. See
+[Height and layers](#height-and-layers).
 
 ## Height and layers
 
-The plaque is **1.8 mm** thick: a 1.2 mm base and a 0.6 mm accent, nine layers at
-0.2 mm. That is close to the practical floor, and the limits are set by different
-things for each layer.
+The plaque is **2.2 mm** thick: a 1.2 mm base and a 1.0 mm accent, 21 layers at
+0.1 mm. Neither part may be under `MIN_PART_H` (1.0 mm), which `pigpen.scad`
+enforces.
 
-**The accent is limited by opacity.** It is a light colour sitting on a dark one,
-and it takes about three layers before the base stops showing through. 0.6 mm is
-three layers at 0.2 mm. Two layers (0.4 mm) slices fine and prints, but the
-colour is marginal.
+That floor is a design choice rather than a printing limit, and it is worth being
+clear which is which. A 0.6 mm accent prints perfectly well — it is a raised
+island on a solid base, so what makes a feature fragile here is its *width*, not
+its height, and every stroke in the wordmark is at least 1.6 mm wide. What the
+extra height buys is a more pronounced relief that reads better at an angle, and
+room for a full stack of top solid layers instead of an almost-all-solid sliver.
 
-**The base is limited by stiffness**, which goes as the *cube* of thickness. At
-1.2 mm the plaque is already only ~4% as stiff as the old 3.5 mm base. It stays
-flat and handles fine, but going much thinner gets floppy fast across a 120 mm
-span, and thin flat plates are the ones that curl at the corners.
-
-The practical floor is `DARK_H=0.8 LIGHT_H=0.4` — **1.2 mm total**, six layers.
-That slices cleanly with the colour boundary intact; it is just noticeably
-flexible and the accent's opacity is marginal.
-
-Dropping the height also made the fragile bits *less* fragile: the small dots
-went from 2.5:1 tall-and-thin to 0.4:1, and the print uses 51% less filament
-(the accent alone dropped 82%).
+The base is limited by stiffness, which goes as the *cube* of thickness. 1.2 mm
+stays flat and handles fine; much thinner gets floppy quickly across a 120 mm
+span, and thin flat plates are the ones that curl at the corners. Raise `DARK_H`
+to 1.5 or 1.6 if you want it to feel more solid — it is 11 layers at 1.2 mm, so
+each 0.1 mm step is one more layer.
 
 ### The boundary has to land on a layer
 
@@ -150,25 +146,34 @@ at `z = DARK_H`, and a slicer cannot split a layer: if that plane falls mid-laye
 the whole layer prints in one filament, so a sliver of the base comes out in the
 accent colour or the reverse.
 
-This is not theoretical — the old 3.5 mm default was 17.5 layers at 0.2 mm, and
-slicing it put the tool change a layer late. `pigpen.scad` now asserts it:
+This is not theoretical — an earlier 3.5 mm default was 17.5 layers at 0.2 mm, and
+slicing it put the tool change a layer late. `pigpen.scad` asserts it now:
 
 ```
-$ make stl DARK_H=3.5
-ERROR: Assertion 'whole(DARK_LAYERS)' failed: "DARK_H (3.5) is not a whole
-number of layers: it is 17.5 layers at FIRST_LAYER_H=0.2 + LAYER_H=0.2. ...
-Pick DARK_H = 0.2 + n * 0.2."
+$ make stl DARK_H=1.25
+ERROR: DARK_H (1.25) is not a whole number of layers: it is 11.5 layers at
+FIRST_LAYER_H=0.2 + LAYER_H=0.1. ... Pick DARK_H = 0.2 + n * 0.1.
 ```
 
-If you print at a different layer height, say so and the check follows:
+**`FIRST_LAYER_H` is the one to watch.** Everything above the first layer is
+stacked at `LAYER_H`, so a different first layer shifts every boundary above it.
+Most 0.1 mm profiles start at 0.2 mm, which is the default here — but some use
+0.15 mm, and on that grid `DARK_H=1.2` is 11.5 layers and the build refuses it.
+Check your profile and pass the real value:
 
 ```sh
-make all LAYER_H=0.15 FIRST_LAYER_H=0.15 DARK_H=1.2 LIGHT_H=0.6
+make all FIRST_LAYER_H=0.15 DARK_H=1.25 LIGHT_H=1.0    # 0.15 + 10.5 -> no
+make all FIRST_LAYER_H=0.15 DARK_H=1.15 LIGHT_H=1.0    # 0.15 + 10   -> yes
 ```
 
-Set `FIRST_LAYER_H` when your profile's first layer differs from the rest, since
-everything above it is stacked at `LAYER_H` and the first layer shifts every
-boundary.
+Printing at a different layer height works the same way:
+
+```sh
+make all LAYER_H=0.2 FIRST_LAYER_H=0.2 DARK_H=1.2 LIGHT_H=1.0
+```
+
+Verified by slicing the shipped 3MF at 0.1 mm: 21 layers, tool change at exactly
+z = 1.3 (the base plus one layer), filament reported separately per extruder.
 
 ## `BASE_MODE`, and why it exists
 
@@ -198,8 +203,8 @@ exists because of that failure mode, and the build now treats any OpenSCAD
 - Every stroke in the wordmark is at least **1.6 mm** wide, so the script face
   prints comfortably on a 0.4 mm nozzle.
 - The smallest features are the little dots in the light layer: about **1.38 mm
-  across** at `WIDTH_MM=120`. At the default 0.6 mm accent they are wider than
-  they are tall, so they are no longer the fragile part they were at 3.5 mm.
+  across** at `WIDTH_MM=120`. At the default 1.0 mm accent they are still wider
+  than they are tall, so they are not the fragile part they were at 3.5 mm.
 - The light layer is 16 separate pieces. Fine for a filament swap or a
   multi-material printer; painful if you were planning to print it separately and
   glue it on.
