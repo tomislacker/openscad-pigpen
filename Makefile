@@ -184,6 +184,7 @@ SCAD_NAMES  := $(basename $(SCAD_SRCS))
 
 MMU_3MF     := $(DIST)/pigpen.3mf
 MMU_STAMP   := $(BUILD)/.3mf-flags
+MODEL_STAMP := $(BUILD)/.model-flags
 
 STL_ALL     := $(STL_DIR)/pigpen.stl
 STL_DARK    := $(STL_DIR)/pigpen-dark.stl
@@ -201,8 +202,12 @@ TOTAL_H     := $(shell awk 'BEGIN { printf "%g", $(DARK_H) + $(LIGHT_H) }')
 
 # Values pushed into OpenSCAD. -D wins over the assignments in the .scad, so the
 # file stays usable on its own in the GUI while `make` stays authoritative here.
-# Everything a model needs before it can be rendered.
-MODEL_DEPS := $(CONFIG) $(SVGS)
+# Everything a model needs before it can be rendered. MODEL_STAMP is what makes
+# `make stl WIDTH_MM=200` actually rebuild: none of the -D values below is a file
+# make can watch, so without it a second build with different dimensions quietly
+# keeps the previous STL, and `make check` then measures the old solid against
+# the new expectations.
+MODEL_DEPS := $(CONFIG) $(SVGS) $(MODEL_STAMP)
 
 SCAD_DEFS = \
 	-D 'WIDTH_MM=$(WIDTH_MM)' \
@@ -393,6 +398,10 @@ $(STL_LIGHT): $(SCAD) $(MODEL_DEPS)
 # the meshes do; neither of those is a file make can watch.
 MMU_ENV = name=$(MODEL_NAME) dark=$(PART_DARK):$(EXTRUDER_DARK) \
 	light=$(PART_LIGHT):$(EXTRUDER_LIGHT)
+
+$(MODEL_STAMP): FORCE
+	@mkdir -p $(BUILD)
+	@echo '$(SCAD_DEFS)' | cmp -s - '$@' || echo '$(SCAD_DEFS)' > '$@'
 
 $(MMU_STAMP): FORCE
 	@mkdir -p $(BUILD)
