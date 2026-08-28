@@ -82,27 +82,6 @@ LIGHT_H     ?= 3.5
 # gives a single clean set of contours instead.
 BASE_MODE   ?= silhouette
 
-# ------------------------------------------------------- wall mounting ------
-
-# Keyhole slots recessed into the back of the base.
-KEYHOLES        ?= true
-# Diameter of the opening the screw head passes through (#6 or #8 pan head).
-KEYHOLE_HEAD_D  ?= 8.5
-# Width of the slot the shank slides along.
-KEYHOLE_SHANK_D ?= 5.0
-# How far the plaque drops onto the screw once hooked on.
-KEYHOLE_SLOT_LEN ?= 9.0
-# Material left between the pocket and the front face. DARK_H - this is the
-# pocket depth, and it has to swallow a screw head: at DARK_H=3.5 that leaves
-# 2.1 mm, enough for a #6 (2.0 mm) but not a #8 (2.4 mm). There is no room for a
-# boss on the back - the plaque prints back-down, so a boss would leave the whole
-# silhouette overhanging - which is why DARK_H is the whole budget.
-KEYHOLE_ROOF    ?= 1.4
-# Material kept between a keyhole and the edge of the plaque.
-KEYHOLE_WALL    ?= 1.5
-# Where to sit the keyholes, as a fraction of artwork height below the top edge.
-KEYHOLE_DROP    ?= 0.30
-
 # --------------------------------------------------------- trace settings ----
 
 # Upsample factor applied to the alpha channel before tracing. 1 is plenty here:
@@ -142,20 +121,10 @@ CAM_TOP     ?= 0,0,0,0,0,0,0
 PROJ_TOP    ?= o
 CAM_FRONT   ?= 0,0,0,90,0,0,0
 PROJ_FRONT  ?= o
-# Looking at the underside, which is the face that goes against the wall - this
-# is the only view the keyhole slots are visible in.
-# Tilted rather than square-on, and in a flat mid grey: a straight orthographic
-# view of a flat-bottomed pocket in near-black brown shows nothing at all, since
-# the pocket floor and the surrounding face shade identically.
-CAM_BACK    ?= 0,0,0,150,0,25,0
-PROJ_BACK   ?= p
-# Named colours, not hex: a '#' in a make *variable* starts a comment and would
-# truncate this mid-quote. (Inside a recipe line it is passed through fine.)
-DEFS_BACK   ?= -D 'DARK_COLOR="darkgray"' -D 'LIGHT_COLOR="darkgray"'
 
 # Views rendered for every .scad. Adding one here needs a matching CAM_<NAME>
 # and PROJ_<NAME> above; nothing else.
-VIEWS       ?= iso top front back
+VIEWS       ?= iso top front
 
 # --------------------------------------------------------------- exports ----
 
@@ -183,18 +152,7 @@ CONFIG      := $(BUILD)/config.scad
 TRACE_STAMP := $(BUILD)/.trace-flags
 RENDER_STAMP := $(BUILD)/.render-flags
 
-KEYHOLE_SCAD  := $(BUILD)/keyholes.scad
-KEYHOLE_DRAW  := $(BUILD)/keyholes.draw
-KEYHOLE_MAP   := $(IMG_DIR)/keyhole-map.png
 LAYER_SHEET   := $(IMG_DIR)/layers.png
-KEYHOLE_MASK  := $(BUILD)/base-silhouette.pgm
-KEYHOLE_STAMP := $(BUILD)/.keyhole-flags
-# The placement search runs on a downsampled mask: an exact distance transform
-# over the full render would take seconds in pure Python for no benefit. 8 px on
-# the 3600 px canvas is 0.27 mm, far finer than the placement needs to be. Scale
-# this with RENDER_W to hold both the precision and the runtime steady.
-KEYHOLE_DOWNSAMPLE ?= 8
-KEYHOLE_MASK_PCT   := $(shell awk 'BEGIN { printf "%g", 100 / $(KEYHOLE_DOWNSAMPLE) }')
 
 DARK_PNG    := $(LAYERS_DIR)/$(DARK_LAYER).png
 LIGHT_PNG   := $(LAYERS_DIR)/$(LIGHT_LAYER).png
@@ -223,19 +181,14 @@ STLS        := $(patsubst %,$(STL_DIR)/%.stl,$(SCAD_NAMES)) $(STL_DARK) $(STL_LI
 PREVIEWS    := $(foreach n,$(SCAD_NAMES),\
                  $(foreach v,$(VIEWS),$(IMG_DIR)/$(n)-$(v).png))
 PREVIEWS    += $(LAYER_SHEET)
-ifneq ($(KEYHOLES),false)
-PREVIEWS    += $(KEYHOLE_MAP)
-endif
 
 TOTAL_H     := $(shell awk 'BEGIN { printf "%g", $(DARK_H) + $(LIGHT_H) }')
-KEYHOLE_POCKET := $(shell awk 'BEGIN { printf "%g", $(DARK_H) - $(KEYHOLE_ROOF) }')
-# Read back out of the generated placement file, so `check` measures against what
-# was actually built rather than recomputing it and agreeing with itself.
-KEYHOLE_AREA         = $(shell sed -n 's/^KEYHOLE_AREA_MM2 = \(.*\);/\1/p' '$(KEYHOLE_SCAD)' 2>/dev/null)
-KEYHOLE_COUNT_ACTUAL = $(shell sed -n 's/^KEYHOLE_COUNT = \(.*\);/\1/p' '$(KEYHOLE_SCAD)' 2>/dev/null)
 
 # Values pushed into OpenSCAD. -D wins over the assignments in the .scad, so the
 # file stays usable on its own in the GUI while `make` stays authoritative here.
+# Everything a model needs before it can be rendered.
+MODEL_DEPS := $(CONFIG) $(SVGS)
+
 SCAD_DEFS = \
 	-D 'WIDTH_MM=$(WIDTH_MM)' \
 	-D 'DARK_H=$(DARK_H)' \
@@ -243,25 +196,9 @@ SCAD_DEFS = \
 	-D 'BASE_MODE="$(BASE_MODE)"' \
 	-D 'DARK_SVG="$(DARK_SVG)"' \
 	-D 'LIGHT_SVG="$(LIGHT_SVG)"' \
-	-D 'BASE_SVG="$(BASE_SVG)"' \
-	-D 'KEYHOLES=$(KEYHOLES)' \
-	-D 'KEYHOLE_HEAD_D=$(KEYHOLE_HEAD_D)' \
-	-D 'KEYHOLE_SHANK_D=$(KEYHOLE_SHANK_D)' \
-	-D 'KEYHOLE_SLOT_LEN=$(KEYHOLE_SLOT_LEN)' \
-	-D 'KEYHOLE_ROOF=$(KEYHOLE_ROOF)' \
-	-D 'KEYHOLE_WALL=$(KEYHOLE_WALL)'
+	-D 'BASE_SVG="$(BASE_SVG)"'
 
-KEYHOLE_ENV = width=$(WIDTH_MM) head=$(KEYHOLE_HEAD_D) shank=$(KEYHOLE_SHANK_D) \
-	slot=$(KEYHOLE_SLOT_LEN) wall=$(KEYHOLE_WALL) drop=$(KEYHOLE_DROP) \
-	downsample=$(KEYHOLE_DOWNSAMPLE)
 
-# Everything a model needs before it can be rendered. Keyhole placement is only
-# required when keyholes are switched on, so turning them off cannot fail the
-# build on a plaque too small to place one.
-MODEL_DEPS := $(CONFIG) $(SVGS)
-ifneq ($(KEYHOLES),false)
-MODEL_DEPS += $(KEYHOLE_SCAD)
-endif
 
 # OpenSCAD exits 0 even when CGAL rejects part of the model - it prints
 # "ERROR: The given mesh is not closed!", drops that solid, and writes a
@@ -301,16 +238,14 @@ $(call run_openscad, -o '$(1)' --export-format=$(STL_FORMAT) \
 	$(SCAD_DEFS) -D 'PART="$(2)"' '$(3)')
 endef
 
-# $(call render_view,<output>,<camera>,<projection>,<scad>,<extra defs>)
+# $(call render_view,<output>,<camera>,<projection>,<scad>)
 #
 # PNG export uses OpenSCAD's preview renderer, which honours color(); the full
-# CGAL render (--render) would draw everything in one colour instead. The extra
-# defs come from DEFS_<VIEW> and land after SCAD_DEFS, so a view can override
-# anything the build set.
+# CGAL render (--render) would draw everything in one colour instead.
 define render_view
 @mkdir -p $(dir $(1))
 @echo 'openscad -> $(1)'
-$(call run_openscad, -o '$(1)' $(SCAD_DEFS) $(5) -D 'PART="all"' \
+$(call run_openscad, -o '$(1)' $(SCAD_DEFS) -D 'PART="all"' \
 	--imgsize=$(IMG_SIZE) --camera=$(2) --viewall --autocenter \
 	--projection=$(3) --colorscheme='$(COLORSCHEME)' '$(4)')
 $(call trim_preview,$(1))
@@ -333,8 +268,7 @@ TRACE_ENV = \
 
 # ---------------------------------------------------------------- targets ----
 
-.PHONY: all dist help layers trace config scad keyholes keyhole-map \
-        check-keyholes stl stl-dark stl-light \
+.PHONY: all dist help layers trace config scad stl stl-dark stl-light \
         preview thumbs check layer-sheet gui clean distclean tools FORCE
 
 all: stl preview ## Trace, build every STL, and render the previews
@@ -411,34 +345,6 @@ $(CONFIG): $(SVGS) tools/svg_bbox.py
 	@mkdir -p $(BUILD)
 	$(PYTHON) tools/svg_bbox.py --out '$@' $(SVGS)
 
-# --- keyhole placement ---
-
-keyholes: $(KEYHOLE_SCAD) ## Choose and verify keyhole positions
-	@grep -E '^(KEYHOLE_SITES|    \[|\]|KEYHOLE_CLEARANCE)' '$(KEYHOLE_SCAD)'
-
-# A 1-bit mask of the finished plaque outline, downsampled for the placement
-# search. Built from the merged silhouette because that is exactly what the base
-# is extruded from, so clearance measured here is clearance in the solid.
-$(KEYHOLE_MASK): $(BASE_PNG)
-	@mkdir -p $(BUILD)
-	$(MAGICK) '$<' -alpha extract -threshold 50% \
-		-resize $(KEYHOLE_MASK_PCT)% -threshold 50% -depth 8 'pgm:$@'
-
-# Re-place when the screw dimensions or the plaque size change, not just when
-# the artwork does; the clearance that a site needs depends on both.
-$(KEYHOLE_STAMP): FORCE
-	@mkdir -p $(BUILD)
-	@echo '$(KEYHOLE_ENV)' | cmp -s - '$@' || echo '$(KEYHOLE_ENV)' > '$@'
-
-$(KEYHOLE_SCAD): $(KEYHOLE_MASK) $(CONFIG) tools/keyhole_sites.py $(KEYHOLE_STAMP)
-	$(PYTHON) tools/keyhole_sites.py \
-		--mask '$(KEYHOLE_MASK)' --config '$(CONFIG)' --out '$@' \
-		--width-mm $(WIDTH_MM) \
-		--head-d $(KEYHOLE_HEAD_D) --shank-d $(KEYHOLE_SHANK_D) \
-		--slot-len $(KEYHOLE_SLOT_LEN) --wall $(KEYHOLE_WALL) \
-		--drop $(KEYHOLE_DROP) --downsample $(KEYHOLE_DOWNSAMPLE) \
-		--draw '$(KEYHOLE_DRAW)'
-
 # --- solids ---
 
 stl: $(STLS) ## Export an STL for every .scad, plus the per-colour cuts
@@ -470,19 +376,9 @@ thumbs: preview     ## Alias for preview
 # change up top. dist/img/<model>-<view>.png is built from <model>.scad.
 define preview_rule
 $$(IMG_DIR)/%-$(1).png: %.scad $$(MODEL_DEPS)
-	$$(call render_view,$$@,$$(CAM_$(call UPPER,$(1))),$$(PROJ_$(call UPPER,$(1))),$$<,$$(DEFS_$(call UPPER,$(1))))
+	$$(call render_view,$$@,$$(CAM_$(call UPPER,$(1))),$$(PROJ_$(call UPPER,$(1))),$$<)
 endef
 $(foreach v,$(VIEWS),$(eval $(call preview_rule,$(v))))
-
-# Where the keyholes ended up, drawn straight onto the plaque outline. Much
-# easier to read than the 3-D back view when checking they clear the edges.
-keyhole-map: $(KEYHOLE_MAP) ## Diagram of the keyhole placement
-$(KEYHOLE_MAP): $(KEYHOLE_SCAD) $(BASE_PNG)
-	@mkdir -p $(IMG_DIR)
-	$(MAGICK) '$(BASE_PNG)' -alpha extract -threshold 50% \
-		-background '#1d1f21' -alpha off -fill '#c05050' -stroke none \
-		-draw '@$(KEYHOLE_DRAW)' -resize 1000x $(PNG_REPRODUCIBLE) '$@'
-	@echo 'wrote $@'
 
 # On white, not on each layer's own colour: the base group renders as a solid
 # blob in exactly the dark fill colour, so compositing it over that colour would
@@ -506,34 +402,6 @@ check: $(STLS) ## Measure the STLs against the requested size
 	$(PYTHON) tools/stl_bbox.py '$(STL_DARK)' --expect-z $(DARK_H)
 	@echo '--- light layer (expect $(LIGHT_H) mm tall) ---'
 	$(PYTHON) tools/stl_bbox.py '$(STL_LIGHT)' --expect-z $(LIGHT_H)
-ifneq ($(KEYHOLES),false)
-	@$(MAKE) --no-print-directory check-keyholes
-endif
-
-# Proves the keyholes were actually cut, and cut to size. Nothing else does: the
-# pockets are invisible in a bounding box, and a keyhole that slid off the edge
-# of the plaque would still render and still export a valid STL. Builds a second
-# copy of the base with keyholes off and compares how much material went missing
-# against the area the solver computed.
-check-keyholes: $(STL_DARK) $(KEYHOLE_SCAD)
-	@echo '--- keyholes (expect $(KEYHOLE_COUNT_ACTUAL) x $(KEYHOLE_AREA) mm^2 x $(KEYHOLE_POCKET) mm) ---'
-	@ref=$$(mktemp -d); \
-	$(OPENSCAD) -o "$$ref/nokeys.stl" --export-format=$(STL_FORMAT) \
-		$(SCAD_DEFS) -D 'KEYHOLES=false' -D 'PART="dark"' '$(SCAD)' >/dev/null 2>&1; \
-	solid=$$($(PYTHON) tools/stl_bbox.py "$$ref/nokeys.stl" --volume-only); \
-	cut=$$($(PYTHON) tools/stl_bbox.py '$(STL_DARK)' --volume-only); \
-	rm -rf "$$ref"; \
-	awk -v solid="$$solid" -v cut="$$cut" \
-	    -v n='$(KEYHOLE_COUNT_ACTUAL)' -v area='$(KEYHOLE_AREA)' -v depth='$(KEYHOLE_POCKET)' \
-	    'BEGIN { \
-	       want = n * area * depth; \
-	       if (want <= 0) { print "FAIL: no keyhole size in $(KEYHOLE_SCAD)"; exit 1 } \
-	       got = solid - cut; \
-	       err = (got - want) / want; if (err < 0) err = -err; \
-	       printf "  removed %.1f mm^3, expected %.1f mm^3 (%.2f%% off)\n", got, want, err * 100; \
-	       if (err > 0.02) { print "FAIL: keyholes are not the size they should be"; exit 1 } \
-	       print "OK: keyholes cut to size" }'
-
 gui: $(MODEL_DEPS) ## Open the model in the OpenSCAD GUI
 	$(OPENSCAD) '$(SCAD)' &
 

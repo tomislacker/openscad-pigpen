@@ -76,8 +76,6 @@ def main():
     ap.add_argument("--expect-y", type=float)
     ap.add_argument("--expect-z", type=float)
     ap.add_argument("--tol", type=float, default=0.05, help="allowed error in mm")
-    ap.add_argument("--volume-only", action="store_true",
-                    help="print just the mesh volume in mm^3, for scripting")
     args = ap.parse_args()
 
     data = open(args.stl, "rb").read()
@@ -97,10 +95,6 @@ def main():
         sys.exit("stl_bbox.py: %s contains no geometry" % args.stl)
 
     volume = mesh_volume(tris)
-    if args.volume_only:
-        print("%.6f" % volume)
-        return
-
     size = [hi[i] - lo[i] for i in range(3)]
     axes = "xyz"
     print("%s: %d facets, %.1f mm^3" % (args.stl, facets, volume))
