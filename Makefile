@@ -65,8 +65,23 @@ RENDER_H    ?= 1800
 
 # Printed width of the artwork in mm; the height follows the aspect ratio.
 WIDTH_MM    ?= 120
-DARK_H      ?= 3.5
-LIGHT_H     ?= 3.5
+# Layer thicknesses, in mm. Both must be whole numbers of print layers: the two
+# colours meet at z = DARK_H, and a boundary that lands mid-layer cannot be
+# split, so the slicer prints that whole layer in one filament. pigpen.scad
+# asserts this rather than letting it through.
+#   DARK_H  1.2 = 6 layers at 0.2. Thin enough to stay flat, thick enough not to
+#           feel flimsy across 120 mm. Stiffness goes as the cube of thickness,
+#           so going lower gets floppy quickly.
+#   LIGHT_H 0.6 = 3 layers at 0.2, which is what a light colour needs to read as
+#           fully opaque over a dark one.
+# 0.8 / 0.4 slices cleanly and is the practical floor; see the README.
+DARK_H      ?= 1.2
+LIGHT_H     ?= 0.6
+
+# The layer height these are checked against. Set FIRST_LAYER_H if your profile
+# uses a different first layer, since that shifts every boundary above it.
+LAYER_H       ?= 0.2
+FIRST_LAYER_H ?= 0.2
 
 # silhouette = dark and light merged into a solid base, so the light layer is
 # supported (printable). knockout = the dark layer exactly as drawn, holes and
@@ -213,6 +228,8 @@ SCAD_DEFS = \
 	-D 'WIDTH_MM=$(WIDTH_MM)' \
 	-D 'DARK_H=$(DARK_H)' \
 	-D 'LIGHT_H=$(LIGHT_H)' \
+	-D 'LAYER_H=$(LAYER_H)' \
+	-D 'FIRST_LAYER_H=$(FIRST_LAYER_H)' \
 	-D 'BASE_MODE="$(BASE_MODE)"' \
 	-D 'DARK_SVG="$(DARK_SVG)"' \
 	-D 'LIGHT_SVG="$(LIGHT_SVG)"' \
@@ -304,7 +321,7 @@ help: ## Show this help
 		| awk -F':.*?## ' '{ printf "  \033[1m%-12s\033[0m %s\n", $$1, $$2 }'
 	@echo
 	@echo 'Current settings (override on the command line):'
-	@echo '  WIDTH_MM=$(WIDTH_MM)  DARK_H=$(DARK_H)  LIGHT_H=$(LIGHT_H)  BASE_MODE=$(BASE_MODE)'
+	@echo '  WIDTH_MM=$(WIDTH_MM)  DARK_H=$(DARK_H)  LIGHT_H=$(LIGHT_H)  LAYER_H=$(LAYER_H)'
 	@echo '  DARK_LAYER=$(DARK_LAYER)  LIGHT_LAYER=$(LIGHT_LAYER)  TRACE_SCALE=$(TRACE_SCALE)'
 	@echo
 	@echo 'Example:  make stl WIDTH_MM=200 DARK_H=4'

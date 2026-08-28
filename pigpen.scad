@@ -20,10 +20,23 @@ include <build/config.scad>
 
 // Printed width of the artwork, in mm. Height follows from the aspect ratio.
 WIDTH_MM = 120;      // [20:1:400]
-// Thickness of the dark base layer, in mm.
-DARK_H = 3.5;        // [0.2:0.1:20]
-// Thickness of the light layer that sits on top of the base, in mm.
-LIGHT_H = 3.5;       // [0.2:0.1:20]
+// Thickness of the dark base layer, in mm. 1.2 is six layers at 0.2: thin
+// enough to stay flat, thick enough not to feel flimsy across 120 mm.
+DARK_H = 1.2;        // [0.2:0.1:20]
+// Thickness of the light layer on top, in mm. 0.6 is three layers at 0.2, which
+// is what it takes for a light colour to read as fully opaque over a dark one.
+LIGHT_H = 0.6;       // [0.2:0.1:20]
+
+/* [Slicing] */
+
+// The layer height you intend to print at. The two colours meet at z = DARK_H,
+// and that plane has to land exactly on a layer boundary: if it does not, the
+// slicer cannot split the layer and prints the whole of it in one colour, so a
+// sliver of the base comes out in the accent filament or the reverse.
+LAYER_H = 0.2;       // [0.05:0.05:0.4]
+// First layer height, when your profile differs from LAYER_H. Everything above
+// the first layer is stacked at LAYER_H, so the first one shifts every boundary.
+FIRST_LAYER_H = 0.2; // [0.05:0.05:0.4]
 
 /* [Build] */
 
@@ -71,6 +84,28 @@ assert(!is_undef(ART_W),
        "build/config.scad is missing or incomplete - run `make` before rendering.");
 assert(ART_W > 0 && ART_H > 0, "measured artwork has no extent - re-run `make trace`.");
 
+// Layer counts for the two colours. The base is the first layer plus whole
+// layers on top of it; the accent starts from a boundary, so it is whole layers
+// all the way. Both have to come out integral.
+function whole(x) = abs(x - round(x)) < 1e-6;
+DARK_LAYERS = (DARK_H - FIRST_LAYER_H) / LAYER_H + 1;
+LIGHT_LAYERS = LIGHT_H / LAYER_H;
+
+assert(DARK_H >= FIRST_LAYER_H,
+       str("DARK_H (", DARK_H, ") is thinner than one first layer (", FIRST_LAYER_H, ")."));
+assert(whole(DARK_LAYERS),
+       str("DARK_H (", DARK_H, ") is not a whole number of layers: it is ",
+           DARK_LAYERS, " layers at FIRST_LAYER_H=", FIRST_LAYER_H, " + LAYER_H=",
+           LAYER_H, ". The colour boundary would land mid-layer and the slicer ",
+           "would print that layer entirely in one filament. Pick DARK_H = ",
+           FIRST_LAYER_H, " + n * ", LAYER_H, "."));
+assert(whole(LIGHT_LAYERS),
+       str("LIGHT_H (", LIGHT_H, ") is not a whole number of layers: it is ",
+           LIGHT_LAYERS, " layers at LAYER_H=", LAYER_H,
+           ". The top of the accent would land mid-layer."));
+assert(LIGHT_LAYERS >= 1,
+       "LIGHT_H is thinner than one layer - the accent would not be printed at all.");
+
 // Guarded so that a missing config.scad produces the assertion above and
 // nothing else; unguarded, OpenSCAD evaluates these first and buries the real
 // message under "undefined operation" warnings.
@@ -78,7 +113,8 @@ SCALE = is_undef(ART_W) ? 1 : WIDTH_MM / ART_W;
 HEIGHT_MM = is_undef(ART_H) ? 0 : ART_H * SCALE;
 
 echo(str("pigpen: ", WIDTH_MM, " x ", HEIGHT_MM, " x ", DARK_H + LIGHT_H,
-         " mm  (base=", BASE_MODE, ", part=", PART, ")"));
+         " mm  (base=", BASE_MODE, ", part=", PART, ", ",
+         round(DARK_LAYERS), "+", round(LIGHT_LAYERS), " layers at ", LAYER_H, "mm)"));
 
 // Pull one traced layer into place: scaled to the requested width and shifted so
 // the *combined* artwork, not this layer's own extent, lands on the origin. Both
