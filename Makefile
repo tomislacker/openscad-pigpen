@@ -1,7 +1,7 @@
-# Pigpen logo: GIMP layers -> traced SVG -> OpenSCAD -> STL / previews.
+# Pigpen logo: SVG groups -> traced SVG -> OpenSCAD -> STL / previews.
 #
-#   pigpen_logo.xcf
-#     |  make layers    GIMP exports each layer full-canvas, alpha intact
+#   pigpen_logo.svg + StratoRegular-2d5o.ttf
+#     |  make layers    Inkscape renders each group full-canvas, alpha intact
 #     v
 #   build/layers/*.png
 #     |  make trace     alpha -> 1-bit mask -> potrace -> SVG
@@ -26,8 +26,15 @@ SHELL := /usr/bin/env bash
 
 # ---------------------------------------------------------------- inputs ----
 
-XCF         ?= pigpen_logo.xcf
+SVG_SRC     ?= pigpen_logo.svg
 SCAD        ?= pigpen.scad
+
+# The wordmark is set in Strato, which is not installed system-wide. Inkscape
+# finds it through a throwaway fontconfig that tools/render_layer.sh points at
+# this directory. Without that it falls back to a default sans - which is how the
+# .xcf came to have Noto Sans baked into it rather than the real typeface.
+FONT        ?= StratoRegular-2d5o.ttf
+FONT_DIR    ?= $(CURDIR)
 
 # Intermediates (throwaway, .gitignored) and finished artefacts (committed).
 # The STLs and previews live in dist/ because they are the point of the repo:
@@ -36,15 +43,23 @@ SCAD        ?= pigpen.scad
 BUILD       ?= build
 DIST        ?= dist
 
-# Layer names as they appear in the .xcf. `make layers` prints what it found,
-# so if you rename them in GIMP the error will tell you the new names.
-DARK_LAYER  ?= DarkPart
-LIGHT_LAYER ?= LightPart
+# Group ids in the source SVG. Rendering a missing one lists the ids that do
+# exist, so a rename in the artwork gives a usable error.
+DARK_LAYER  ?= base
+LIGHT_LAYER ?= details
 
 # Name for the synthesised merged mask (see the BASE_MODE note below). It is not
-# a layer in the .xcf; it is generated into build/layers/ alongside the real ones
-# so it flows through the same tracing rule.
+# a group in the SVG; it is generated into build/layers/ alongside the rendered
+# ones so it flows through the same tracing rule.
 BASE_LAYER  := base-silhouette
+
+# Canvas the layers are rendered at. Only the ratio to WIDTH_MM matters
+# downstream, so this is purely a fidelity knob: at 3600 px the plaque is
+# 0.033 mm per pixel at the default size, an order of magnitude finer than a
+# 0.4 mm nozzle resolves. Every layer must use the same canvas or they stop
+# being registered to each other.
+RENDER_W    ?= 3600
+RENDER_H    ?= 1800
 
 # ------------------------------------------------------------ model size ----
 
@@ -151,7 +166,7 @@ STL_FORMAT  ?= binstl
 
 # ------------------------------------------------------------- programs -----
 
-GIMP        ?= gimp-console
+INKSCAPE    ?= inkscape
 OPENSCAD    ?= openscad
 POTRACE     ?= potrace
 MAGICK      ?= magick
@@ -164,9 +179,9 @@ SVG_DIR     := $(BUILD)/svg
 STL_DIR     := $(DIST)/stl
 IMG_DIR     := $(DIST)/img
 
-MANIFEST    := $(LAYERS_DIR)/manifest.tsv
 CONFIG      := $(BUILD)/config.scad
 TRACE_STAMP := $(BUILD)/.trace-flags
+RENDER_STAMP := $(BUILD)/.render-flags
 
 KEYHOLE_SCAD  := $(BUILD)/keyholes.scad
 KEYHOLE_DRAW  := $(BUILD)/keyholes.draw
@@ -175,9 +190,10 @@ LAYER_SHEET   := $(IMG_DIR)/layers.png
 KEYHOLE_MASK  := $(BUILD)/base-silhouette.pgm
 KEYHOLE_STAMP := $(BUILD)/.keyhole-flags
 # The placement search runs on a downsampled mask: an exact distance transform
-# over the full 1800x900 would take seconds in pure Python for no benefit, since
-# 4 px here is 0.27 mm - far finer than the placement needs to be.
-KEYHOLE_DOWNSAMPLE ?= 4
+# over the full render would take seconds in pure Python for no benefit. 8 px on
+# the 3600 px canvas is 0.27 mm, far finer than the placement needs to be. Scale
+# this with RENDER_W to hold both the precision and the runtime steady.
+KEYHOLE_DOWNSAMPLE ?= 8
 KEYHOLE_MASK_PCT   := $(shell awk 'BEGIN { printf "%g", 100 / $(KEYHOLE_DOWNSAMPLE) }')
 
 DARK_PNG    := $(LAYERS_DIR)/$(DARK_LAYER).png
@@ -304,21 +320,16 @@ endef
 # upper case, like every other setting in this file.
 UPPER = $(shell echo '$(1)' | tr '[:lower:]' '[:upper:]')
 
+# Re-render when the canvas size changes, not just when the artwork does.
+# Layers rendered at different sizes would silently stop being registered.
+RENDER_ENV = RENDER_W=$(RENDER_W) RENDER_H=$(RENDER_H) FONT_DIR='$(FONT_DIR)'
+
 TRACE_ENV = \
 	TRACE_SCALE=$(TRACE_SCALE) \
 	TRACE_THRESHOLD=$(TRACE_THRESHOLD) \
 	TRACE_TURDSIZE=$(TRACE_TURDSIZE) \
 	TRACE_ALPHAMAX=$(TRACE_ALPHAMAX) \
 	TRACE_OPTTOLERANCE=$(TRACE_OPTTOLERANCE)
-
-# GIMP 3 needs an explicit batch interpreter, and --quit or it lingers as a
-# background process once the script finishes.
-GIMP_BATCH = $(GIMP) -i --quit --batch-interpreter=python-fu-eval
-
-# GIMP chatters about plug-ins it cannot load, shader inputs it does not use,
-# and a broken pipe as --quit tears the plug-in down. None of it affects the
-# export; keep the real messages visible and drop the rest.
-GIMP_NOISE = 'surfacemap_x|libcfitsio|gimp_wire_read|gjs.*No such file|gimp_flush\(\).*Broken pipe|Welcome to GIMP|^[[:space:]]*$$'
 
 # ---------------------------------------------------------------- targets ----
 
@@ -345,7 +356,7 @@ help: ## Show this help
 
 tools: ## Check that every external program is installed
 	@missing=0; \
-	for t in $(GIMP) $(OPENSCAD) $(POTRACE) $(MAGICK) $(PYTHON); do \
+	for t in $(INKSCAPE) $(OPENSCAD) $(POTRACE) $(MAGICK) $(PYTHON); do \
 		if command -v "$$t" >/dev/null 2>&1; then \
 			printf '  ok      %s\n' "$$t"; \
 		else \
@@ -356,45 +367,18 @@ tools: ## Check that every external program is installed
 
 # --- layer export ---
 
-layers: $(MANIFEST) ## Export each .xcf layer to build/layers/<name>.png
-	@echo 'Layers in $(XCF):'
-	@grep -v '^#' $(MANIFEST) | cut -f1 | sed 's/^/  /'
+layers: $(DARK_PNG) $(LIGHT_PNG) ## Render each SVG group to build/layers/<id>.png
+	@echo 'Rendered from $(SVG_SRC) at $(RENDER_W)x$(RENDER_H):'
+	@printf '  %s\n' $(DARK_PNG) $(LIGHT_PNG)
 
-# GIMP writes several PNGs plus the manifest in one run. The manifest is written
-# last, so it is the reliable stamp for "the export completed".
-$(MANIFEST): $(XCF) tools/export_layers.py
+# One rule per group; the stem is the SVG group id. Explicit rules elsewhere
+# (the merged mask below) take precedence over this pattern.
+$(LAYERS_DIR)/%.png: $(SVG_SRC) $(FONT) tools/render_layer.sh $(RENDER_STAMP)
 	@mkdir -p $(LAYERS_DIR)
-	@rm -f '$(MANIFEST)'
-	@log=$$(mktemp); \
-	if XCF_IN='$(abspath $(XCF))' \
-	   LAYERS_DIR='$(abspath $(LAYERS_DIR))' \
-	   LAYERS_MANIFEST='$(abspath $(MANIFEST))' \
-	   $(GIMP_BATCH) -b "$$(cat tools/export_layers.py)" </dev/null >"$$log" 2>&1; then \
-		grep -vE $(GIMP_NOISE) "$$log" || true; \
-		rm -f "$$log"; \
-	else \
-		status=$$?; \
-		echo 'GIMP layer export failed:' >&2; \
-		grep -vE $(GIMP_NOISE) "$$log" >&2 || true; \
-		rm -f "$$log"; \
-		exit $$status; \
-	fi
-	@test -s '$(MANIFEST)' || { echo 'GIMP export produced no manifest' >&2; exit 1; }
-
-# The PNGs come out of the rule above. This rule only proves the requested layer
-# actually exists, then touches it so make does not re-run the export forever
-# (GIMP writes the PNGs before the manifest, leaving them "older" than it).
-$(LAYERS_DIR)/%.png: $(MANIFEST)
-	@if [ ! -f '$@' ]; then \
-		echo "No layer named '$*' in $(XCF). Layers present:" >&2; \
-		grep -v '^#' $(MANIFEST) | cut -f1 | sed 's/^/  /' >&2; \
-		echo "Set DARK_LAYER=/LIGHT_LAYER= to match, or rename them in GIMP." >&2; \
-		exit 1; \
-	fi
-	@touch '$@'
+	$(RENDER_ENV) tools/render_layer.sh '$(SVG_SRC)' '$*' '$@'
 
 # The merged base mask. An explicit rule, so it wins over the pattern rule above
-# (this one is synthesised, not exported from the .xcf). Compositing with a
+# (this one is synthesised, not rendered from the SVG). Compositing with a
 # transparent background makes the result's alpha the union of the two inputs'.
 $(BASE_PNG): $(DARK_PNG) $(LIGHT_PNG)
 	$(MAGICK) '$(DARK_PNG)' '$(LIGHT_PNG)' -background none -flatten '$@'
@@ -406,6 +390,10 @@ trace: $(SVGS) ## Trace the layer PNGs into build/svg/<name>.svg
 # Re-trace when the trace settings change, not just when the PNGs do. Without
 # this, changing TRACE_SCALE for one layer would silently leave the other at the
 # old setting and the two would no longer register.
+$(RENDER_STAMP): FORCE
+	@mkdir -p $(BUILD)
+	@echo '$(RENDER_ENV)' | cmp -s - '$@' || echo '$(RENDER_ENV)' > '$@'
+
 $(TRACE_STAMP): FORCE
 	@mkdir -p $(BUILD)
 	@echo '$(TRACE_ENV)' | cmp -s - '$@' || echo '$(TRACE_ENV)' > '$@'
@@ -496,12 +484,15 @@ $(KEYHOLE_MAP): $(KEYHOLE_SCAD) $(BASE_PNG)
 		-draw '@$(KEYHOLE_DRAW)' -resize 1000x $(PNG_REPRODUCIBLE) '$@'
 	@echo 'wrote $@'
 
-layer-sheet: $(LAYER_SHEET) ## Contact sheet of the raw layer split
+# On white, not on each layer's own colour: the base group renders as a solid
+# blob in exactly the dark fill colour, so compositing it over that colour would
+# make the sheet two blank rectangles.
+layer-sheet: $(LAYER_SHEET) ## Contact sheet of the two rendered layers
 $(LAYER_SHEET): $(DARK_PNG) $(LIGHT_PNG)
 	@mkdir -p $(IMG_DIR)
 	$(MAGICK) \
-		\( '$(DARK_PNG)'  -background '#492517' -alpha remove -alpha off -resize 900x \) \
-		\( '$(LIGHT_PNG)' -background '#a5a5a5' -alpha remove -alpha off -resize 900x \) \
+		\( '$(DARK_PNG)'  -background white -alpha remove -alpha off -resize 900x \) \
+		\( '$(LIGHT_PNG)' -background white -alpha remove -alpha off -resize 900x \) \
 		-append $(PNG_REPRODUCIBLE) '$@'
 	@echo 'wrote $@'
 
@@ -551,7 +542,7 @@ gui: $(MODEL_DEPS) ## Open the model in the OpenSCAD GUI
 clean: ## Remove the generated artefacts in dist/ and the measured config
 	rm -rf '$(DIST)' '$(CONFIG)'
 
-distclean: clean ## Also remove everything under build/, including the GIMP export
+distclean: clean ## Also remove everything under build/, including the rendered layers
 	rm -rf '$(BUILD)'
 
 FORCE:
